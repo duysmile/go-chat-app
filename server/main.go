@@ -2,46 +2,26 @@ package main
 
 import (
 	"fmt"
-	"log"
+	"go-chat-app/pkg/websocket"
 	"net/http"
-
-	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin:     func(r *http.Request) bool { return true },
-}
-
-func reader(conn *websocket.Conn) {
-	for {
-		messageType, p, err := conn.ReadMessage()
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		fmt.Println(string(p))
-
-		if err := conn.WriteMessage(messageType, p); err != nil {
-			log.Println(err)
-			return
-		}
-	}
-}
-
-func serveWs(w http.ResponseWriter, r *http.Request) {
+func serveWs(pool *websocket.Pool, w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Socket connected from:", r.Host)
 
-	ws, err := upgrader.Upgrade(w, r, nil)
+	conn, err := websocket.Upgrade(w, r)
 	if err != nil {
-		log.Println(err)
-		fmt.Fprintf(w, "error connect ws")
+		fmt.Fprintf(w, "%+V\n", err)
 		return
 	}
 
-	reader(ws)
+	client := &websocket.Client{
+		Conn: conn,
+		Pool: pool,
+	}
+
+	pool.Register <- client
+	client.Read()
 }
 
 func setupRoutes() {
@@ -49,7 +29,11 @@ func setupRoutes() {
 		fmt.Fprintf(rw, "Simple server")
 	})
 
-	http.HandleFunc("/ws", serveWs)
+	pool := websocket.NewPool()
+	go pool.Start()
+	http.HandleFunc("/ws", func(rw http.ResponseWriter, r *http.Request) {
+		serveWs(pool, rw, r)
+	})
 }
 
 func main() {
